@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.stats import rv_continuous, kstest
-from SupervisedLearningIntraday.Modelling.CrossValidation import PurgedKFold
+from Modelling.CrossValidation import PurgedKFold
 from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
 from sklearn.ensemble import BaggingClassifier
 from sklearn.pipeline import Pipeline

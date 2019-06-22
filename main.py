@@ -1,9 +1,9 @@
 import matplotlib.pyplot as plt
-from SupervisedLearningIntraday.synthetic_data import SyntheticData
-from SupervisedLearningIntraday.features import create_up_down_dataframe as updown
-from SupervisedLearningIntraday.features import bbands, get_down_cross, get_up_cross
-from SupervisedLearningIntraday.features import stochasticOsillator as stoch
-from SupervisedLearningIntraday.features import dobleMomentumStrategy as dms
+from synthetic_data import SyntheticData
+from features import create_up_down_dataframe as updown
+from features import bbands, get_down_cross, get_up_cross
+from features import stochasticOsillator as stoch
+from features import dobleMomentumStrategy as dms
 import numpy as np
 import pandas as pd
 from logbook import Logger
@@ -20,15 +20,15 @@ from catalyst import run_algorithm
 from catalyst.api import (record, symbol, order_target_percent, order_percent, )
 from catalyst.api import order, record, symbol, symbols
 
-import SupervisedLearningIntraday.DataAnalysis.FinantialDataStructure as fds
-import SupervisedLearningIntraday.DataAnalysis.labelling as labelling
-import SupervisedLearningIntraday.DataAnalysis.weights as weights
-import SupervisedLearningIntraday.DataAnalysis.FractionallyDifferentiatedFeatures as fdf
-import SupervisedLearningIntraday.HighPerformanceComputing.MultiprocessingAndVectorization as mpv
-from SupervisedLearningIntraday.DataAnalysis.weights import mpNumCoEvents, mpSampleW
-from SupervisedLearningIntraday.Modelling.CrossValidation import cvScore
-from SupervisedLearningIntraday.Modelling.HyperparameterTuning import clfHyperFit
-from SupervisedLearningIntraday.Modelling.HyperparameterTuning import logUniform
+import DataAnalysis.FinantialDataStructure as fds
+import DataAnalysis.labelling as labelling
+import DataAnalysis.weights as weights
+import DataAnalysis.FractionallyDifferentiatedFeatures as fdf
+import HighPerformanceComputing.MultiprocessingAndVectorization as mpv
+from DataAnalysis.weights import mpNumCoEvents, mpSampleW
+from Modelling.CrossValidation import cvScore
+from Modelling.HyperparameterTuning import clfHyperFit
+from Modelling.HyperparameterTuning import logUniform
 from sklearn.pipeline import make_pipeline
 from sklearn.pipeline import Pipeline
 import multiprocessing
@@ -59,8 +59,8 @@ def initialize(context):
     context.lookback_w = 30
     context.lookforward_w = 5
     context.model_trained = False
-    context.training_data_size = 50000 # 700000
-    context.model_pickle_directory = "/home/enzo/PycharmProjects/SupervisedLearningIntraday/TrainedModels/"
+    context.training_data_size = 700000 # 700000
+    context.model_pickle_directory = "/home/enzo/SupervisedLearningIntraday/TrainedModels/"
 
 
     if os.path.isfile(context.model_pickle_directory + "meta_model.pkl"):
@@ -84,6 +84,8 @@ def initialize(context):
     context.d = 0.25  # este es el factor fraccional de Fractional Differentieted Features
                       # y debe ser verfificado en el ambiente de investigación para
                       # determinar su magnitud utilizando la función plotMinFFD()
+                    
+                    
 
 
 def handle_data(context, data):
@@ -144,12 +146,12 @@ def handle_data(context, data):
             confirmation = context.meta_model.predict(confirmation_input)
 
             if up_cross and confirmation == 1:
-                size = context.meta_model.predict_proba(confirmation_input)[0][2]
+                size = context.meta_model.predict_proba(confirmation_input)[0][1]
                 for i, asset in enumerate(context.symbols):
                     order_target_percent(asset, size)
                     print("Compra: ", size)
             elif down_cross and confirmation == 1:
-                size = context.meta_model.predict_proba(confirmation_input)[0][2]
+                size = context.meta_model.predict_proba(confirmation_input)[0][1]
                 for i, asset in enumerate(context.symbols):
                     order_target_percent(asset, -size)
                     print("Venta: ", size)
@@ -203,6 +205,7 @@ def get_data(context, data_, window):
 def train_model(context, _data):
     # Crear clase de datos sintéticos
 
+    # Crear ventana de datos
     # Crear ventana de datos.
     h1 = _data.history(context.symbols,
                        context.row_features,
@@ -242,8 +245,8 @@ def train_model(context, _data):
     bb_down = get_down_cross(bb_df, "price")
     bb_up = get_up_cross(bb_df, "price")
 
-    bb_side_up = pd.Series(-1, index=bb_up.index)
-    bb_side_down = pd.Series(1, index=bb_down.index)
+    bb_side_up = pd.Series(1, index=bb_up.index)
+    bb_side_down = pd.Series(-1, index=bb_down.index)
     bb_side_raw = pd.concat([bb_side_up, bb_side_down]).sort_index()
 
     # Agregar características extra de entrenamiento
@@ -274,7 +277,7 @@ def train_model(context, _data):
 
     meta_events = labelling.getEvents(close=vbs.close,
                                       tEvents=tEvents,
-                                      TpSl=[2, 1],
+                                      TpSl=[1, 1],
                                       trgt=vol,
                                       minRet=0.01,
                                       numThreads=24,
@@ -424,7 +427,8 @@ def train_model(context, _data):
                     t1=vertical_barrier.loc[FDFeatures["price"].index],
                     cv=8,  # número de divisiones para el Cross-Validation
                     cvGen=None,  # Generador de Cross-Validator, si existiera previamente.
-                    pctEmbargo=0.01
+                    pctEmbargo=0.01,
+                    k=2  # Si k > 1 se usa el algoritmo "Validación Cruzada Purgada y Combinatoria"
                     )
 
     print("Puntaje de Cross-Validation para modelo primario: ", score)
@@ -478,7 +482,8 @@ def train_model(context, _data):
                          t1=vertical_barrier.loc[FDFeatures["price"].index],
                          cv=8,  # número de divisiones para el Cross-Validation
                          cvGen=None,  # Generador de Cross-Validator, si existiera previamente.
-                         pctEmbargo=0.01
+                         pctEmbargo=0.01,
+                         k=2  # Si k > 1 se usa el algoritmo "Validación Cruzada Purgada y Combinatoria"
                          )
 
     print("Puntaje de Cross-Validation para modelo secundario: ", meta_score)
@@ -493,7 +498,7 @@ def train_model(context, _data):
 
 if __name__ == '__main__':
     run_algorithm(
-        capital_base=1000,
+        capital_base=10000,
         data_frequency='minute',
         initialize=initialize,
         handle_data=handle_data,
@@ -501,6 +506,6 @@ if __name__ == '__main__':
         exchange_name='poloniex',
         algo_namespace=NAMESPACE,
         quote_currency='usd',
-        start=pd.to_datetime('2018-02-1', utc=True),
-        end=pd.to_datetime('2018-02-28', utc=True),
+        start=pd.to_datetime('2018-1-1', utc=True),
+        end=pd.to_datetime('2018-01-15', utc=True),
     )

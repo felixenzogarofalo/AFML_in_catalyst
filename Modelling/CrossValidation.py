@@ -2,6 +2,8 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection._split import _BaseKFold
 from sklearn.metrics import log_loss, accuracy_score
+from Backtesting.CrossValidation import CombinatorialCV
+import math
 
 def getTrainTimes(t1, testTimes):
     """
@@ -47,12 +49,13 @@ class PurgedKFold(_BaseKFold):
         self.t1 = t1
         self.pctEmbargo = pctEmbargo
 
-    def split(self, X, y=None, groups=None):
+    def split(self, X, y=None, groups=None, combinational=False):
         if (X.index == self.t1.index).sum() != len(self.t1):
             raise ValueError("X and ThruDateValues must have he same index")
         indices = np.arange(X.shape[0])
         mbrg = int(X.shape[0] * self.pctEmbargo)
         test_starts = [(i[0], i[-1] + 1) for i in np.array_split(np.arange(X.shape[0]), self.n_splits)]
+
         for i, j in test_starts:
             # Inicio del conjunto de datos
             t0 = self.t1.index[i]
@@ -64,8 +67,53 @@ class PurgedKFold(_BaseKFold):
                 train_indices=np.concatenate((train_indices, indices[maxT1Idx + mbrg:]))
             yield train_indices, test_indices
 
+    def compbinationalGroupsSplit(self, X, k):
+        """
+        Particiona las T observaciones en N grupos sin barajar
+        :param X: Pandas DataFrame conteniendo las T observaciones de características y etiquetas
+        :param k número de grupos de prueba
+        :return: indices de entrenamiento y prueba
+        """
+        T = X.shape[0]
+        indices = np.arange(X.shape[0])
+        mbrg = int(X.shape[0] * self.pctEmbargo)
 
-def cvScore(clf, X, y, sample_weight, scoring='neg_log_loss', t1=None, cv=None, cvGen=None, pctEmbargo=None):
+        # Estos son los grupos
+        groups = np.array_split(np.arange(X.shape[0]), self.n_splits)
+
+        # Número de posibles divisiones entrenamiento/prueba
+        df_i = pd.DataFrame(data={"i": list(range(k))})
+        numerador = np.prod(self.n_splits - df_i.i.values)
+        denominador = math.factorial(k)
+        self.splits_num = numerador / denominador
+
+        # Número de posibles caminos
+        self.paths_num = int(k / self.n_splits * self.splits_num)
+
+        splits = []
+        split_num = 1
+        path_count = [0] * self.n_splits
+        self.path_map = []
+        map_count = 0
+
+        for i in range(self.n_splits):
+            for j in range(i + 1, self.n_splits):
+                testing_groups = []
+                training_groups = []
+                for k in range(self.n_splits):
+                    if (k == i) or (k == j):
+                        testing_groups.append(groups[k])
+                        path_count[k] += 1
+                        self.path_map.append([split_num, k, path_count[k]])
+                    else:
+                        training_groups.append(groups[k])
+                for test_group in testing_groups:
+                    yield np.concatenate(training_groups), test_group
+                split_num += 1
+
+
+def cvScore(clf, X, y, sample_weight, scoring='neg_log_loss', t1=None, cv=None, cvGen=None, pctEmbargo=None,
+            k=1):
     """
 
     :param clf: modelo clasificador
@@ -77,6 +125,7 @@ def cvScore(clf, X, y, sample_weight, scoring='neg_log_loss', t1=None, cv=None, 
     :param cv: número de divisiones para la Validación Cruzada
     :param cvGen: Generador si existiera alguna previamente
     :param pctEmbargo: procentaje de separación entre los grupos de entrenamiento y prueba
+    :param k: número de grupos que conforman en conjunto de prueba
     :return:
     """
     if scoring not in ['neg_log_loss', 'accuracy']:
@@ -85,21 +134,52 @@ def cvScore(clf, X, y, sample_weight, scoring='neg_log_loss', t1=None, cv=None, 
         cvGen = PurgedKFold(n_splits=cv,
                             t1=t1,
                             pctEmbargo=pctEmbargo)  # purged
-    score = []
-    for train, test in cvGen.split(X=X):
 
-        fit = clf.fit(X=X.iloc[train, :], y=y.iloc[train], sample_weight=sample_weight.iloc[train].values)
+    if k > 1:
+        # Quiere decir que Validación cruzada será combinacional
+        print("SML INFO: Creando divisiones combinatorias.")
 
-        if scoring == 'neg_log_loss':
-            prob = fit.predict_proba(X.iloc[test, :])
-            score_ = -log_loss(y.iloc[test],
-                               prob,
-                               sample_weight=sample_weight.iloc[test].values,
-                               labels=clf.classes_)
-        else:
-            pred = fit.predict(X.iloc[test, :])
-            score_ = accuracy_score(y.iloc[test],
-                                    pred,
-                                    sample_weight=sample_weight.iloc[test].values)
-        score.append(score_)
-    return np.array(score)
+        ccv = CombinatorialCV(N=cv, k=k)
+        groups_e = ccv.GroupsSplit(X)
+
+        score = []
+
+        for train, test in cvGen.compbinationalGroupsSplit(X=X, k=k):
+
+            fit = clf.fit(X=X.iloc[train, :], y=y.iloc[train], sample_weight=sample_weight.iloc[train].values)
+
+            if scoring == 'neg_log_loss':
+                prob = fit.predict_proba(X.iloc[test, :])
+                score_ = -log_loss(y.iloc[test],
+                                   prob,
+                                   sample_weight=sample_weight.iloc[test].values,
+                                   labels=clf.classes_)
+            else:
+                pred = fit.predict(X.iloc[test, :])
+                score_ = accuracy_score(y.iloc[test],
+                                        pred,
+                                        sample_weight=sample_weight.iloc[test].values)
+            score.append(score_)
+
+        return np.array(score)
+
+    else:
+        score = []
+
+        for train, test in cvGen.split(X=X):
+
+            fit = clf.fit(X=X.iloc[train, :], y=y.iloc[train], sample_weight=sample_weight.iloc[train].values)
+
+            if scoring == 'neg_log_loss':
+                prob = fit.predict_proba(X.iloc[test, :])
+                score_ = -log_loss(y.iloc[test],
+                                   prob,
+                                   sample_weight=sample_weight.iloc[test].values,
+                                   labels=clf.classes_)
+            else:
+                pred = fit.predict(X.iloc[test, :])
+                score_ = accuracy_score(y.iloc[test],
+                                        pred,
+                                        sample_weight=sample_weight.iloc[test].values)
+            score.append(score_)
+        return np.array(score)

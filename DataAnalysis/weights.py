@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from SupervisedLearningIntraday.HighPerformanceComputing.MultiprocessingAndVectorization import processJobs, processJobs_
+from HighPerformanceComputing.MultiprocessingAndVectorization import processJobs, processJobs_
 
 def mpNumCoEvents(closeIdx, t1, molecule):
     """
